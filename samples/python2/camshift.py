@@ -13,17 +13,23 @@ Usage:
     camshift.py [<video source>]
 
     To initialize tracking, select the object with mouse
-
+  
 Keys:
 -----
-    ESC   - exit
-    b     - toggle back-projected probability visualization
+    ESC    - exit
+    SPACE  - toggle pause
+    b      - toggle back-projected probability visualization
+    <Down> - decrease inter-frame delay
+    <Up>   - increase inter-frame delay
 '''
 
 import numpy as np
 import cv2
 import video
+from time import sleep
 
+KEYS = {'SPACE': 32, 'ENTER': 10, 'ESCAPE': 27, 'UP': 65362, 'DOWN': 65364}
+lbtn = False
 
 class App(object):
     def __init__(self, video_src):
@@ -38,12 +44,16 @@ class App(object):
         self.show_backproj = False
 
     def onmouse(self, event, x, y, flags, param):
-        x, y = np.int16([x, y]) # BUG
+        global lbtn
+        #x, y = np.int16([x, y]) # BUG
+        if event == cv2.EVENT_LBUTTONUP:
+            lbtn = False
         if event == cv2.EVENT_LBUTTONDOWN:
             self.drag_start = (x, y)
             self.tracking_state = 0
-        if self.drag_start:
-            if flags & cv2.EVENT_FLAG_LBUTTON:
+            lbtn = True
+        if self.drag_start: 
+            if lbtn:
                 h, w = self.frame.shape[:2]
                 xo, yo = self.drag_start
                 x0, y0 = np.maximum(0, np.minimum([xo, yo], [x, y]))
@@ -64,11 +74,19 @@ class App(object):
             h = int(self.hist[i])
             cv2.rectangle(img, (i*bin_w+2, 255), ((i+1)*bin_w-2, 255-h), (int(180.0*i/bin_count), 255, 255), -1)
         img = cv2.cvtColor(img, cv2.COLOR_HSV2BGR)
+        print img
         cv2.imshow('hist', img)
 
+    INTERFRAME_DELAY_MS_DEF   = 0.0
+    INTERFRAME_DELAY_MS_MAX   = 1.0
+    INTERFRAME_DELAY_MS_DELTA = 0.2
+    interfr_delay_ms = INTERFRAME_DELAY_MS_DEF
     def run(self):
         while True:
+            sleep(self.interfr_delay_ms)
             ret, self.frame = self.cam.read()
+            if not ret:
+                break
             vis = self.frame.copy()
             hsv = cv2.cvtColor(self.frame, cv2.COLOR_BGR2HSV)
             mask = cv2.inRange(hsv, np.array((0., 60., 32.)), np.array((180., 255., 255.)))
@@ -82,7 +100,7 @@ class App(object):
                 cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX);
                 self.hist = hist.reshape(-1)
                 self.show_hist()
-
+                
                 vis_roi = vis[y0:y1, x0:x1]
                 cv2.bitwise_not(vis_roi, vis_roi)
                 vis[mask == 0] = 0
@@ -92,21 +110,30 @@ class App(object):
                 prob = cv2.calcBackProject([hsv], [0], self.hist, [0, 180], 1)
                 prob &= mask
                 term_crit = ( cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 1 )
+                #print 'TRACK WINDOW BEFORE cv2.Camshift', self.track_window
                 track_box, self.track_window = cv2.CamShift(prob, self.track_window, term_crit)
-
+                #print 'TRACK WINDOW AFTER cv2.Camshift', self.track_window
+                
                 if self.show_backproj:
                     vis[:] = prob[...,np.newaxis]
                 try: cv2.ellipse(vis, track_box, (0, 0, 255), 2)
                 except: print track_box
-
+                
             cv2.imshow('camshift', vis)
 
-            ch = 0xFF & cv2.waitKey(5)
-            if ch == 27:
+            ch = cv2.waitKey(5)
+            if ch == KEYS['ESCAPE']:
                 break
             if ch == ord('b'):
                 self.show_backproj = not self.show_backproj
-        cv2.destroyAllWindows()
+            if ch == KEYS['UP']:
+                self.interfr_delay_ms = min(self.INTERFRAME_DELAY_MS_MAX, self.interfr_delay_ms + self.INTERFRAME_DELAY_MS_DELTA)
+            if ch == KEYS['DOWN']:
+                self.interfr_delay_ms = max(0.0, self.interfr_delay_ms - self.INTERFRAME_DELAY_MS_DELTA)
+            if ch == KEYS['SPACE']:
+                while cv2.waitKey(10) != KEYS['SPACE']:
+                    pass
+        cv2.destroyAllWindows() 			
 
 
 if __name__ == '__main__':
